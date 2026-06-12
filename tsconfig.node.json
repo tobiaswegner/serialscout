@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "target": "ESNext",
+    "strict": true,
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["electron", "electron.vite.config.ts"]
+}

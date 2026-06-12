@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SerialScout — UI design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0b0e12;
+    --bg-2: #0f141a;
+    --panel: #141a22;
+    --panel-2: #1a212b;
+    --line: #232c38;
+    --line-soft: #1b232d;
+    --ink: #e7eef6;
+    --ink-2: #9aa8b8;
+    --ink-3: #5a6675;
+    --rx: #ffb14e;      /* incoming — phosphor amber */
+    --tx: #46d6c6;      /* outgoing — signal cyan */
+    --err: #ff6b6b;
+    --sys: #6f7d8f;
+    --accent: #ffb14e;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+    --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--sans);
+    color: var(--ink);
+    background:
+      radial-gradient(1100px 380px at 78% -8%, rgba(255,177,78,.07), transparent 55%),
+      radial-gradient(900px 420px at 10% 110%, rgba(70,214,198,.05), transparent 55%),
+      var(--bg);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 248px 1fr 232px;
+    grid-template-rows: 56px 1fr 30px;
+    grid-template-areas:
+      "top top top"
+      "side main stats"
+      "status status status";
+    height: 100vh;
+  }
+
+  /* ---------- top bar ---------- */
+  .top { grid-area: top; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 18px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .brand { display: flex; align-items: center; gap: 11px; }
+  .mark { position: relative; width: 22px; height: 22px; }
+  .mark .ring { position: absolute; inset: 0; border: 2px solid var(--accent); border-radius: 6px; opacity: .35; }
+  .mark .core { position: absolute; inset: 5px; background: var(--accent); border-radius: 3px;
+    box-shadow: 0 0 14px rgba(255,177,78,.8); animation: pulse 2.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{ opacity:.85; } 50%{ opacity:.45; } }
+  .brand h1 { font-size: 16px; font-weight: 700; letter-spacing: .01em; }
+  .brand h1 span { color: var(--accent); }
+  .brand small { display:block; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: .12em; margin-top: 1px; }
+
+  .conn { display: flex; align-items: center; gap: 8px; }
+  .field { display: flex; align-items: center; background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 0 4px 0 10px; height: 34px; }
+  .field label { font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: .08em; margin-right: 6px; }
+  select, .composer input { background: transparent; color: var(--ink); border: 0; font-family: var(--mono);
+    font-size: 12.5px; padding: 6px 6px; outline: none; }
+  select { cursor: pointer; }
+  .btn { font-family: var(--sans); font-weight: 600; font-size: 12.5px; height: 34px; padding: 0 16px;
+    border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2); color: var(--ink);
+    cursor: pointer; transition: transform .07s ease, filter .15s ease; display:inline-flex; align-items:center; gap:7px; }
+  .btn:hover { transform: translateY(-1px); }
+  .btn-primary { background: var(--accent); color: #271a06; border-color: transparent; }
+  .btn-danger { background: transparent; color: var(--err); border-color: rgba(255,107,107,.5); }
+  .btn-ghost { background: transparent; color: var(--ink-2); }
+
+  /* ---------- sidebar ---------- */
+  .side { grid-area: side; background: var(--bg-2); border-right: 1px solid var(--line); overflow-y: auto; padding: 16px 12px; }
+  .side h2 { font-family: var(--mono); font-size: 10px; letter-spacing: .16em; color: var(--ink-3);
+    text-transform: uppercase; margin: 18px 6px 8px; }
+  .side h2:first-child { margin-top: 0; }
+  .sess { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px;
+    cursor: pointer; transition: background .12s ease; }
+  .sess:hover { background: var(--panel); }
+  .sess.active { background: var(--panel); box-shadow: inset 2px 0 0 var(--accent); }
+  .sdot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .sdot.on { background: var(--tx); box-shadow: 0 0 7px var(--tx); }
+  .sdot.off { background: #38424f; }
+  .sess .meta { min-width: 0; }
+  .sess .name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sess .sub { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+  .snip { display: flex; align-items: center; justify-content: space-between; padding: 7px 10px;
+    border-radius: 7px; cursor: pointer; font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+  .snip:hover { background: var(--panel); color: var(--ink); }
+  .snip .key { color: var(--tx); }
+  .snip i { color: var(--ink-3); font-style: normal; font-size: 11px; }
+
+  /* ---------- main / console ---------- */
+  .main { grid-area: main; display: grid; grid-template-rows: 42px 1fr auto; min-width: 0; min-height: 0; }
+  .toolbar { display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--bg-2); }
+  .chip { font-family: var(--mono); font-size: 11px; padding: 4px 9px; border-radius: 6px; border: 1px solid var(--line);
+    color: var(--ink-2); cursor: pointer; user-select: none; background: transparent; transition: all .12s ease; }
+  .chip:hover { border-color: var(--ink-3); color: var(--ink); }
+  .chip.on { color: #271a06; background: var(--accent); border-color: transparent; }
+  .chip.rxc.on { background: var(--rx); }
+  .chip.txc.on { background: var(--tx); color: #06201d; }
+  .tb-spacer { flex: 1; }
+  .tb-ico { color: var(--ink-2); background: transparent; border: 0; cursor: pointer; padding: 6px; border-radius: 6px; font-size: 15px; line-height: 1; }
+  .tb-ico:hover { background: var(--panel); color: var(--ink); }
+
+  .console { position: relative; overflow-y: auto; padding: 12px 16px 16px; font-family: var(--mono);
+    font-size: 12.5px; line-height: 1.65; background:
+      repeating-linear-gradient(0deg, transparent 0 3px, rgba(255,255,255,.012) 3px 4px); }
+  .row { display: grid; grid-template-columns: 96px 38px 1fr; gap: 12px; align-items: baseline; padding: 1px 0; }
+  .row .ts { color: var(--ink-3); font-size: 10.5px; }
+  .row .tag { font-size: 9.5px; font-weight: 600; letter-spacing: .06em; }
+  .row .txt { white-space: pre-wrap; word-break: break-word; }
+  .row.rx .tag, .row.rx .txt { color: var(--rx); }
+  .row.tx .tag, .row.tx .txt { color: var(--tx); }
+  .row.err .tag, .row.err .txt { color: var(--err); }
+  .row.sys .tag, .row.sys .txt { color: var(--sys); font-style: italic; }
+  .row.tx .txt::before { content: '› '; opacity: .6; }
+
+  .composer { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-top: 1px solid var(--line); background: var(--panel); }
+  .composer .prompt { color: var(--accent); font-family: var(--mono); font-weight: 600; }
+  .composer input { flex: 1; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 12px; font-size: 13px; }
+  .composer input:focus { border-color: var(--accent); }
+  .le { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; height: 36px; padding: 0 4px; }
+  .btn-send { background: var(--tx); color: #06201d; border: 0; font-weight: 600; height: 36px; padding: 0 18px;
+    border-radius: 8px; cursor: pointer; }
+
+  /* ---------- stats rail ---------- */
+  .stats { grid-area: stats; background: var(--bg-2); border-left: 1px solid var(--line); padding: 16px 14px; overflow-y: auto; }
+  .stats h2 { font-family: var(--mono); font-size: 10px; letter-spacing: .16em; color: var(--ink-3); text-transform: uppercase; margin: 18px 0 8px; }
+  .stats h2:first-child { margin-top: 0; }
+  .card { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; padding: 12px; }
+  .kv { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 12px; padding: 3px 0; }
+  .kv .k { color: var(--ink-3); }
+  .kv .v { color: var(--ink); }
+  .kv .v.cy { color: var(--tx); }
+  .kv .v.am { color: var(--rx); }
+  .metric { display: flex; align-items: baseline; gap: 6px; }
+  .metric .big { font-family: var(--mono); font-size: 22px; font-weight: 600; }
+  .metric .u { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+  .spark { width: 100%; height: 54px; display: block; margin-top: 6px; }
+
+  /* ---------- status bar ---------- */
+  .status { grid-area: status; display: flex; align-items: center; gap: 16px; padding: 0 16px;
+    font-family: var(--mono); font-size: 11px; color: var(--ink-2); background: var(--panel-2); border-top: 1px solid var(--line); }
+  .status .gdot { width: 8px; height: 8px; border-radius: 50%; background: var(--tx); box-shadow: 0 0 8px var(--tx); }
+  .status .sp { flex: 1; }
+
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-thumb { background: #2a3340; border-radius: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+  <div class="shell">
+    <!-- TOP BAR -->
+    <header class="top">
+      <div class="brand">
+        <div class="mark"><div class="ring"></div><div class="core"></div></div>
+        <div>
+          <h1>Serial<span>Scout</span></h1>
+          <small>UART · CLI CLIENT</small>
+        </div>
+      </div>
+      <div class="conn">
+        <div class="field">
+          <label>PORT</label>
+          <select id="port">
+            <option>/dev/tty.usbserial-A50285</option>
+            <option>/dev/tty.usbmodem1411</option>
+            <option>COM3 — Silicon Labs CP210x</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>BAUD</label>
+          <select id="baud">
+            <option>9600</option><option>57600</option>
+            <option selected>115200</option><option>921600</option>
+          </select>
+        </div>
+        <button class="btn btn-ghost" id="rescan" title="Rescan ports">⟳ Rescan</button>
+        <button class="btn btn-danger" id="connect">● Disconnect</button>
+      </div>
+    </header>
+
+    <!-- SIDEBAR -->
+    <aside class="side">
+      <h2>Sessions</h2>
+      <div class="sess active">
+        <span class="sdot on"></span>
+        <div class="meta"><div class="name">ESP32 Dev Board</div><div class="sub">usbserial · 115200 8N1</div></div>
+      </div>
+      <div class="sess">
+        <span class="sdot off"></span>
+        <div class="meta"><div class="name">STM32 Nucleo</div><div class="sub">usbmodem · 57600 8N1</div></div>
+      </div>
+      <div class="sess">
+        <span class="sdot off"></span>
+        <div class="meta"><div class="name">Modem AT bench</div><div class="sub">COM3 · 9600 8N1</div></div>
+      </div>
+
+      <h2>Snippets</h2>
+      <div class="snip" data-cmd="version"><span><span class="key">$</span> version</span><i>⏎</i></div>
+      <div class="snip" data-cmd="help"><span><span class="key">$</span> help</span><i>⏎</i></div>
+      <div class="snip" data-cmd="AT+GMR"><span><span class="key">$</span> AT+GMR</span><i>⏎</i></div>
+      <div class="snip" data-cmd="reboot"><span><span class="key">$</span> reboot</span><i>⏎</i></div>
+      <div class="snip" data-cmd="status"><span><span class="key">$</span> status</span><i>⏎</i></div>
+    </aside>
+
+    <!-- MAIN -->
+    <section class="main">
+      <div class="toolbar">
+        <button class="chip rxc on" data-f="rx">RX</button>
+        <button class="chip txc on" data-f="tx">TX</button>
+        <button class="chip" id="fmt">ASCII</button>
+        <button class="chip on" id="tstamp">Timestamps</button>
+        <span class="tb-spacer"></span>
+        <button class="tb-ico" id="clear" title="Clear">⌫</button>
+        <button class="tb-ico" title="Save log">⭳</button>
+        <button class="tb-ico" title="Settings">⚙</button>
+      </div>
+
+      <div class="console" id="console"></div>
+
+      <div class="composer">
+        <span class="prompt">›</span>
+        <input id="cmd" type="text" placeholder="Type a command and press Enter…" autocomplete="off" />
+        <select class="le" id="le"><option value="lf">LF \n</option><option value="cr">CR \r</option><option value="crlf">CRLF</option><option value="none">None</option></select>
+        <button class="btn-send" id="send">Send</button>
+      </div>
+    </section>
+
+    <!-- STATS RAIL -->
+    <aside class="stats">
+      <h2>Connection</h2>
+      <div class="card">
+        <div class="kv"><span class="k">port</span><span class="v">usbserial-A50285</span></div>
+        <div class="kv"><span class="k">baud</span><span class="v cy">115200</span></div>
+        <div class="kv"><span class="k">framing</span><span class="v">8N1</span></div>
+        <div class="kv"><span class="k">uptime</span><span class="v" id="uptime">00:02:14</span></div>
+      </div>
+
+      <h2>Throughput</h2>
+      <div class="card">
+        <div class="metric"><span class="big am" id="rxRate">312</span><span class="u">B/s · RX</span></div>
+        <svg class="spark" id="spark" viewBox="0 0 200 54" preserveAspectRatio="none"></svg>
+        <div class="kv"><span class="k">rx total</span><span class="v am" id="rxTot">18.4 KB</span></div>
+        <div class="kv"><span class="k">tx total</span><span class="v cy" id="txTot">204 B</span></div>
+      </div>
+
+      <h2>Signal</h2>
+      <div class="card">
+        <div class="kv"><span class="k">framing err</span><span class="v">0</span></div>
+        <div class="kv"><span class="k">overrun</span><span class="v">0</span></div>
+        <div class="kv"><span class="k">latency</span><span class="v">1.8 ms</span></div>
+      </div>
+    </aside>
+
+    <!-- STATUS BAR -->
+    <footer class="status">
+      <span class="gdot"></span>
+      <span>Connected · /dev/tty.usbserial-A50285 · 115200 8N1</span>
+      <span class="sp"></span>
+      <span id="sbRx">RX 18.4 KB</span>
+      <span id="sbTx">TX 204 B</span>
+      <span>autoscroll on</span>
+    </footer>
+  </div>
+
+<script>
+  const consoleEl = document.getElementById('console');
+  let hex = false, showTs = true, rxTotal = 18841, txTotal = 204;
+  const samples = [];
+
+  const fmtBytes = (n) => n > 1024 ? (n/1024).toFixed(1)+' KB' : n+' B';
+  const now = () => new Date().toLocaleTimeString('en-GB', { hour12:false }) + '.' + String(new Date().getMilliseconds()).padStart(3,'0');
+  const toHex = (s) => [...s].map(c => c.charCodeAt(0).toString(16).padStart(2,'0').toUpperCase()).join(' ');
+
+  function add(dir, text) {
+    const row = document.createElement('div');
+    row.className = 'row ' + dir;
+    row.dataset.raw = text; row.dataset.dir = dir;
+    row.innerHTML = `<span class="ts">${showTs ? now() : ''}</span><span class="tag">${dir.toUpperCase()}</span><span class="txt">${hex && dir!=='sys' ? toHex(text) : text}</span>`;
+    consoleEl.appendChild(row);
+    if (consoleEl.children.length > 400) consoleEl.removeChild(consoleEl.firstChild);
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+
+  const boot = [
+    ['sys','— session opened on /dev/tty.usbserial-A50285 @ 115200 —'],
+    ['rx','ets Jun  8 2024 rst:0x1 (POWERON),boot:0x13'],
+    ['rx','SerialScout target online. type `help` for commands.'],
+    ['tx','status'],
+    ['rx','sys: uptime=134s  heap=212456  rssi=-58dBm  mode=STA'],
+  ];
+  boot.forEach(([d,t]) => add(d,t));
+
+  const stream = [
+    'sensor: temp=24.3C  hum=41%  pressure=1013hPa',
+    'imu: ax=0.02 ay=-0.01 az=0.98  gz=0.4',
+    'net: tx ok seq=8841 rtt=1.8ms',
+    'adc: ch0=2048 ch1=1990 ch2=3071 vref=3.30',
+    'log[INFO] loop 0x%04x ok',
+  ];
+  let i = 0;
+  setInterval(() => {
+    const line = stream[i++ % stream.length].replace('0x%04x', '0x'+(Math.random()*65535|0).toString(16).padStart(4,'0'));
+    add('rx', line);
+    rxTotal += line.length + 2;
+  }, 1400);
+
+  function fillFmt() {
+    [...consoleEl.children].forEach(r => {
+      if (r.dataset.dir === 'sys') return;
+      r.querySelector('.txt').textContent = hex ? toHex(r.dataset.raw) : r.dataset.raw;
+    });
+  }
+
+  function sendCmd(v) {
+    if (!v.trim()) return;
+    add('tx', v); txTotal += v.length + 1;
+    setTimeout(() => {
+      const replies = { version:'fw 2.4.1 (build a91f) · sdk 5.1', help:'commands: version help status reboot AT+GMR', reboot:'rebooting…', status:'sys: uptime=137s heap=211980 mode=STA', 'AT+GMR':'AT version:3.2.0.0  OK' };
+      add('rx', replies[v.trim()] || `unknown command: ${v.trim()}`);
+    }, 220);
+  }
+
+  document.getElementById('cmd').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { sendCmd(e.target.value); e.target.value=''; }
+  });
+  document.getElementById('send').addEventListener('click', () => {
+    const el = document.getElementById('cmd'); sendCmd(el.value); el.value='';
+  });
+  document.querySelectorAll('.snip').forEach(s => s.addEventListener('click', () => {
+    document.getElementById('cmd').value = s.dataset.cmd;
+    document.getElementById('cmd').focus();
+  }));
+  document.getElementById('fmt').addEventListener('click', e => {
+    hex = !hex; e.target.textContent = hex ? 'HEX' : 'ASCII'; e.target.classList.toggle('on', hex); fillFmt();
+  });
+  document.getElementById('tstamp').addEventListener('click', e => {
+    showTs = !showTs; e.target.classList.toggle('on', showTs);
+    [...consoleEl.children].forEach(r => r.querySelector('.ts').textContent = showTs ? now() : '');
+  });
+  document.querySelectorAll('.chip[data-f]').forEach(c => c.addEventListener('click', () => {
+    c.classList.toggle('on');
+    const show = c.classList.contains('on');
+    [...consoleEl.querySelectorAll('.row.'+c.dataset.f)].forEach(r => r.style.display = show ? '' : 'none');
+  }));
+  document.getElementById('clear').addEventListener('click', () => consoleEl.innerHTML = '');
+  document.getElementById('connect').addEventListener('click', e => {
+    const on = e.target.classList.toggle('btn-danger');
+    e.target.classList.toggle('btn-primary', !on);
+    e.target.textContent = on ? '● Disconnect' : '● Connect';
+  });
+
+  const spark = document.getElementById('spark');
+  setInterval(() => {
+    samples.push(180 + Math.random()*240); if (samples.length > 40) samples.shift();
+    const max = Math.max(...samples, 1);
+    const pts = samples.map((v,ix) => `${(ix/(40-1))*200},${54 - (v/max)*48 - 3}`).join(' ');
+    spark.innerHTML = `<polyline points="${pts}" fill="none" stroke="#ffb14e" stroke-width="1.6" stroke-linejoin="round"/>` +
+      `<polyline points="0,54 ${pts} 200,54" fill="rgba(255,177,78,.10)" stroke="none"/>`;
+    document.getElementById('rxRate').textContent = Math.round(samples[samples.length-1] || 0);
+    document.getElementById('rxTot').textContent = fmtBytes(rxTotal);
+    document.getElementById('txTot').textContent = fmtBytes(txTotal);
+    document.getElementById('sbRx').textContent = 'RX ' + fmtBytes(rxTotal);
+    document.getElementById('sbTx').textContent = 'TX ' + fmtBytes(txTotal);
+  }, 700);
+
+  let secs = 134;
+  setInterval(() => {
+    secs++; const h = String(secs/3600|0).padStart(2,'0'), m = String((secs%3600)/60|0).padStart(2,'0'), s = String(secs%60).padStart(2,'0');
+    document.getElementById('uptime').textContent = `${h}:${m}:${s}`;
+  }, 1000);
+</script>
+</body>
+</html>
