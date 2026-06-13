@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    name: Type Check & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  package:
+    name: Package / ${{ matrix.label }}
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x64
+            runner: ubuntu-latest
+            eb_args: --linux --x64
+
+          - label: linux-arm64
+            runner: ubuntu-latest
+            eb_args: --linux --arm64
+            qemu: true
+
+          - label: macos-universal
+            runner: macos-latest
+            eb_args: --mac --universal
+
+          - label: windows-x64
+            runner: windows-latest
+            eb_args: --win --x64
+
+          - label: windows-arm64
+            runner: windows-latest
+            eb_args: --win --arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ARM64 Linux cross-compilation requires QEMU for native module prebuilds
+      - name: Set up QEMU
+        if: matrix.qemu == true
+        uses: docker/setup-qemu-action@v3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Package
+        run: npx electron-builder ${{ matrix.eb_args }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: serialscout-${{ matrix.label }}
+          path: release/**/*
+          if-no-files-found: error
+          retention-days: 7
