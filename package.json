@@ -50,6 +50,7 @@
       "target": "nsis"
     },
     "linux": {
+      "maintainer": "Tobias Wegner <git@tobiaswegner.de>",
       "target": [
         "AppImage",
         "deb"
