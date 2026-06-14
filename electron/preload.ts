@@ -31,4 +31,6 @@ contextBridge.exposeInMainWorld('serial', {
     ipcRenderer.on('serial:closed', h)
     return () => ipcRenderer.removeListener('serial:closed', h)
   },
+  exportLog: (content: string) => ipcRenderer.invoke('log:export', content),
+  importLog: () => ipcRenderer.invoke('log:import'),
 })

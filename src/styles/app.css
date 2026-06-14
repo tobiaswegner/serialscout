@@ -34,13 +34,17 @@ body {
     var(--bg);
 }
 
+/* console wrapper allows filter bar to shrink the scrollable area */
+.console-wrapper { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+
 /* top bar */
 .topbar {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 18px;
+  display: flex; align-items: center;
+  padding: 12px 18px; gap: 12px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
+.session-controls { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand-mark {
   width: 14px; height: 14px; border-radius: 3px;
@@ -76,9 +80,18 @@ button:disabled { opacity: .4; cursor: not-allowed; transform: none; }
 
 /* console */
 .console {
-  overflow-y: auto; padding: 14px 18px;
+  flex: 1; overflow-y: auto; padding: 14px 18px;
   font-family: var(--mono); font-size: 13px; line-height: 1.7;
 }
+
+/* filter bar */
+.filter-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 18px; flex-shrink: 0;
+  border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.filter-bar input[type='text'] { flex: 1; padding: 5px 10px; font-size: 12px; }
+.filter-count { color: var(--ink-dim); font-size: 11px; font-family: var(--mono); white-space: nowrap; }
 .empty { color: var(--ink-dim); font-family: var(--sans); padding-top: 8px; }
 .row { display: grid; grid-template-columns: 92px 42px 1fr; gap: 12px; align-items: baseline; }
 .ts { color: #4a5663; font-size: 11px; }
@@ -108,3 +121,13 @@ button:disabled { opacity: .4; cursor: not-allowed; transform: none; }
 .dot.on { background: var(--tx); box-shadow: 0 0 8px var(--tx); }
 .dot.off { background: #3a434f; }
 .auto { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* small toggle buttons in the statusbar */
+.btn-toggle {
+  padding: 2px 8px; font-size: 10px; font-family: var(--mono);
+  border-radius: 5px; letter-spacing: 0.05em;
+}
+.btn-toggle.active {
+  color: var(--accent); border-color: var(--accent);
+  background: rgba(255, 179, 71, 0.08);
+}

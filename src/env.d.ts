@@ -18,6 +18,8 @@ declare global {
       onData(cb: (payload: { line: string }) => void): () => void
       onError(cb: (payload: { message: string }) => void): () => void
       onClosed(cb: () => void): () => void
+      exportLog(content: string): Promise<{ ok: boolean }>
+      importLog(): Promise<{ ok: boolean; content: string | null }>
     }
   }
 }

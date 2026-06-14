@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import path from 'node:path'
+import fs from 'node:fs/promises'
 import { SerialPort } from 'serialport'
 import { ReadlineParser } from '@serialport/parser-readline'
 
@@ -115,6 +116,31 @@ ipcMain.handle('serial:write', async (_evt, { data, lineEnding }: WriteParams) =
 ipcMain.handle('serial:close', async () => {
   if (!port?.isOpen) return { ok: true }
   return new Promise<{ ok: boolean }>((resolve) => port!.close(() => resolve({ ok: true })))
+})
+
+// ---- Log export / import ---------------------------------------------------
+
+ipcMain.handle('log:export', async (_evt, content: string) => {
+  if (!mainWindow) return { ok: false }
+  const ts = new Date().toISOString().slice(0, 19).replace(/:/g, '-')
+  const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: `serialscout-${ts}.txt`,
+    filters: [{ name: 'Text Log', extensions: ['txt'] }],
+  })
+  if (canceled || !filePath) return { ok: false }
+  await fs.writeFile(filePath, content, 'utf8')
+  return { ok: true }
+})
+
+ipcMain.handle('log:import', async () => {
+  if (!mainWindow) return { ok: false, content: null }
+  const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+    filters: [{ name: 'Text Log', extensions: ['txt'] }],
+    properties: ['openFile'],
+  })
+  if (canceled || !filePaths[0]) return { ok: false, content: null }
+  const content = await fs.readFile(filePaths[0], 'utf8')
+  return { ok: true, content }
 })
 
 // ---- App lifecycle ---------------------------------------------------------
