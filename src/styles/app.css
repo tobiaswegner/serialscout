@@ -111,7 +111,7 @@ button:disabled { opacity: .4; cursor: not-allowed; transform: none; }
 
 /* status bar */
 .statusbar {
-  display: flex; align-items: center; gap: 16px;
+  display: flex; align-items: center; gap: 10px;
   padding: 7px 18px; font-family: var(--mono); font-size: 11px;
   color: var(--ink-dim); background: var(--panel-2);
   border-top: 1px solid var(--line);
@@ -131,3 +131,6 @@ button:disabled { opacity: .4; cursor: not-allowed; transform: none; }
   color: var(--accent); border-color: var(--accent);
   background: rgba(255, 179, 71, 0.08);
 }
+
+/* validation error state for text inputs */
+.input-error { border-color: var(--err) !important; outline: none !important; }

@@ -10,12 +10,13 @@ interface PortInfo {
   productId: string | null
 }
 
-// Safe, minimal API surface exposed to the React renderer.
 contextBridge.exposeInMainWorld('serial', {
   list: (): Promise<PortInfo[]> => ipcRenderer.invoke('serial:list'),
   open: (opts: { path: string; baudRate: number }) => ipcRenderer.invoke('serial:open', opts),
   write: (data: string, lineEnding: LineEndingId) => ipcRenderer.invoke('serial:write', { data, lineEnding }),
+  writeRaw: (bytes: number[]) => ipcRenderer.invoke('serial:writeRaw', bytes),
   close: () => ipcRenderer.invoke('serial:close'),
+  setSignals: (signals: { dtr?: boolean; rts?: boolean }) => ipcRenderer.invoke('serial:set', signals),
   onData: (cb: (payload: { line: string }) => void) => {
     const h = (_e: IpcRendererEvent, payload: { line: string }) => cb(payload)
     ipcRenderer.on('serial:data', h)
@@ -33,4 +34,6 @@ contextBridge.exposeInMainWorld('serial', {
   },
   exportLog: (content: string) => ipcRenderer.invoke('log:export', content),
   importLog: () => ipcRenderer.invoke('log:import'),
+  loadSettings: () => ipcRenderer.invoke('settings:load'),
+  saveSettings: (settings: object) => ipcRenderer.invoke('settings:save', settings),
 })

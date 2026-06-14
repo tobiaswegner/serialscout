@@ -113,9 +113,24 @@ ipcMain.handle('serial:write', async (_evt, { data, lineEnding }: WriteParams) =
   })
 })
 
+ipcMain.handle('serial:writeRaw', async (_evt, bytes: number[]) => {
+  if (!port?.isOpen) throw new Error('Port is not open')
+  const buf = Buffer.from(bytes)
+  return new Promise<{ ok: boolean; bytes: number }>((resolve, reject) => {
+    port!.write(buf, (err) => (err ? reject(err) : resolve({ ok: true, bytes: buf.length })))
+  })
+})
+
 ipcMain.handle('serial:close', async () => {
   if (!port?.isOpen) return { ok: true }
   return new Promise<{ ok: boolean }>((resolve) => port!.close(() => resolve({ ok: true })))
+})
+
+ipcMain.handle('serial:set', async (_evt, signals: { dtr?: boolean; rts?: boolean }) => {
+  if (!port?.isOpen) throw new Error('Port is not open')
+  return new Promise<{ ok: boolean }>((resolve, reject) => {
+    port!.set(signals, (err) => (err ? reject(err) : resolve({ ok: true })))
+  })
 })
 
 // ---- Log export / import ---------------------------------------------------
@@ -141,6 +156,24 @@ ipcMain.handle('log:import', async () => {
   if (canceled || !filePaths[0]) return { ok: false, content: null }
   const content = await fs.readFile(filePaths[0], 'utf8')
   return { ok: true, content }
+})
+
+// ---- Settings persistence --------------------------------------------------
+
+const settingsPath = path.join(app.getPath('userData'), 'settings.json')
+
+ipcMain.handle('settings:load', async () => {
+  try {
+    const data = await fs.readFile(settingsPath, 'utf8')
+    return JSON.parse(data)
+  } catch {
+    return {}
+  }
+})
+
+ipcMain.handle('settings:save', async (_evt, settings: object) => {
+  await fs.writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf8')
+  return { ok: true }
 })
 
 // ---- App lifecycle ---------------------------------------------------------
