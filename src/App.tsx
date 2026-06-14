@@ -10,6 +10,8 @@ const LINE_ENDINGS: Array<{ id: LineEndingId; label: string }> = [
   { id: 'none', label: 'None' },
 ]
 
+type TsFormat = 'clock' | 'relative' | 'hidden'
+
 interface LogLine {
   id: string
   dir: 'rx' | 'tx' | 'sys' | 'err'
@@ -17,8 +19,7 @@ interface LogLine {
   ts: number
 }
 
-// `window.serial` is injected by electron/preload.ts. Falls back to a no-op
-// shim so the renderer can run in a plain browser during UI work.
+// Falls back to a no-op shim so the renderer can run in a plain browser during UI work.
 const serial = window.serial ?? {
   list: async (): Promise<PortInfo[]> => [],
   open: async () => ({ ok: false }),
@@ -27,6 +28,8 @@ const serial = window.serial ?? {
   onData: () => () => {},
   onError: () => () => {},
   onClosed: () => () => {},
+  exportLog: async () => ({ ok: false }),
+  importLog: async () => ({ ok: false, content: null }),
 }
 
 export default function App() {
@@ -40,7 +43,16 @@ export default function App() {
   const [autoscroll, setAutoscroll] = useState(true)
   const [rxBytes, setRxBytes] = useState(0)
   const [txBytes, setTxBytes] = useState(0)
+  const [history, setHistory] = useState<string[]>([])
+  const [historyIndex, setHistoryIndex] = useState(-1)
+  const [tsFormat, setTsFormat] = useState<TsFormat>('clock')
+  const [hexView, setHexView] = useState(false)
+  const [filterText, setFilterText] = useState('')
+  const [filterVisible, setFilterVisible] = useState(false)
+
   const logRef = useRef<HTMLElement>(null)
+  const filterInputRef = useRef<HTMLInputElement>(null)
+  const sessionStart = useRef(Date.now())
 
   const push = useCallback((dir: LogLine['dir'], text: string) => {
     setLines((prev) => [...prev.slice(-4999), { id: crypto.randomUUID(), dir, text, ts: Date.now() }])
@@ -71,6 +83,20 @@ export default function App() {
     if (autoscroll && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [lines, autoscroll])
 
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault()
+        setFilterVisible((v) => {
+          if (!v) setTimeout(() => filterInputRef.current?.focus(), 0)
+          return !v
+        })
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   async function toggleConnection() {
     if (connected) {
       await serial.close()
@@ -80,6 +106,7 @@ export default function App() {
     try {
       await serial.open({ path: selectedPort, baudRate: baud })
       setConnected(true)
+      sessionStart.current = Date.now()
       push('sys', `Connected to ${selectedPort} @ ${baud} baud`)
     } catch (e) {
       push('err', e instanceof Error ? e.message : String(e))
@@ -92,11 +119,76 @@ export default function App() {
       const { bytes } = await serial.write(command, lineEnding)
       setTxBytes((b) => b + (bytes ?? command.length))
       push('tx', command)
+      setHistory((prev) => [command, ...prev.filter((h) => h !== command)].slice(0, 100))
+      setHistoryIndex(-1)
       setCommand('')
     } catch (e) {
       push('err', e instanceof Error ? e.message : String(e))
     }
   }
+
+  function handleInputKey(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') { send(); return }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      const next = Math.min(historyIndex + 1, history.length - 1)
+      if (next >= 0) { setHistoryIndex(next); setCommand(history[next]) }
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      const next = historyIndex - 1
+      setHistoryIndex(next)
+      setCommand(next < 0 ? '' : (history[next] ?? ''))
+    }
+  }
+
+  function cycleTs() {
+    setTsFormat((f) => (f === 'clock' ? 'relative' : f === 'relative' ? 'hidden' : 'clock'))
+  }
+
+  function formatTs(ts: number): string {
+    if (tsFormat === 'relative') return `+${((ts - sessionStart.current) / 1000).toFixed(3)}s`
+    if (tsFormat === 'hidden') return ''
+    return new Date(ts).toLocaleTimeString()
+  }
+
+  function renderText(dir: LogLine['dir'], text: string): string {
+    if (!hexView || dir !== 'rx') return text
+    return Array.from(text).map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join(' ')
+  }
+
+  async function exportLog() {
+    const content = lines
+      .map((l) => `[${new Date(l.ts).toISOString()}] [${l.dir.toUpperCase()}] ${l.text}`)
+      .join('\n')
+    await serial.exportLog(content)
+  }
+
+  async function importLog() {
+    const result = await serial.importLog()
+    if (!result.ok || !result.content) return
+    const imported: LogLine[] = result.content
+      .split('\n')
+      .filter((line) => line.trim())
+      .map((line) => {
+        const m = line.match(/^\[([^\]]+)\] \[(RX|TX|SYS|ERR)\] (.*)$/)
+        if (m) {
+          return {
+            id: crypto.randomUUID(),
+            dir: m[2].toLowerCase() as LogLine['dir'],
+            text: m[3],
+            ts: new Date(m[1]).getTime() || Date.now(),
+          }
+        }
+        return { id: crypto.randomUUID(), dir: 'sys' as const, text: line, ts: Date.now() }
+      })
+    push('sys', `─── Imported ${imported.length} lines ───`)
+    setLines((prev) => [...prev, ...imported].slice(-4999))
+  }
+
+  const filteredLines = filterText
+    ? lines.filter((l) => l.text.toLowerCase().includes(filterText.toLowerCase()))
+    : lines
 
   return (
     <div className="app">
@@ -110,16 +202,13 @@ export default function App() {
             {ports.length === 0 && <option value="">No ports found</option>}
             {ports.map((p) => (
               <option key={p.path} value={p.path}>
-                {p.path}
-                {p.manufacturer ? ` — ${p.manufacturer}` : ''}
+                {p.path}{p.manufacturer ? ` — ${p.manufacturer}` : ''}
               </option>
             ))}
           </select>
           <select value={baud} onChange={(e) => setBaud(Number(e.target.value))}>
             {BAUD_RATES.map((b) => (
-              <option key={b} value={b}>
-                {b} baud
-              </option>
+              <option key={b} value={b}>{b} baud</option>
             ))}
           </select>
           <button className="btn-ghost" onClick={refreshPorts}>Rescan</button>
@@ -127,26 +216,57 @@ export default function App() {
             {connected ? 'Disconnect' : 'Connect'}
           </button>
         </div>
+        <div className="session-controls">
+          <button className="btn-ghost" onClick={importLog}>Import</button>
+          <button className="btn-ghost" onClick={exportLog} disabled={lines.length === 0}>Export</button>
+        </div>
       </header>
 
-      <main className="console" ref={logRef}>
-        {lines.length === 0 && <p className="empty">No data yet. Connect a device to begin scouting.</p>}
-        {lines.map((l) => (
-          <div key={l.id} className={`row row-${l.dir}`}>
-            <span className="ts">{new Date(l.ts).toLocaleTimeString()}</span>
-            <span className="tag">{l.dir.toUpperCase()}</span>
-            <span className="text">{l.text}</span>
+      <div className="console-wrapper">
+        {filterVisible && (
+          <div className="filter-bar">
+            <input
+              ref={filterInputRef}
+              type="text"
+              placeholder="Filter lines…"
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') { setFilterVisible(false); setFilterText('') }
+              }}
+            />
+            <span className="filter-count">{filteredLines.length} / {lines.length}</span>
+            <button
+              className="btn-ghost"
+              style={{ padding: '4px 10px' }}
+              onClick={() => { setFilterVisible(false); setFilterText('') }}
+            >✕</button>
           </div>
-        ))}
-      </main>
+        )}
+        <main className="console" ref={logRef}>
+          {lines.length === 0 && (
+            <p className="empty">No data yet. Connect a device to begin scouting.</p>
+          )}
+          {lines.length > 0 && filteredLines.length === 0 && (
+            <p className="empty">No lines match the current filter.</p>
+          )}
+          {filteredLines.map((l) => (
+            <div key={l.id} className={`row row-${l.dir}`}>
+              <span className="ts">{formatTs(l.ts)}</span>
+              <span className="tag">{l.dir.toUpperCase()}</span>
+              <span className="text">{renderText(l.dir, l.text)}</span>
+            </div>
+          ))}
+        </main>
+      </div>
 
       <footer className="composer">
         <input
           type="text"
-          placeholder="Type a command and press Enter…"
+          placeholder="Type a command and press Enter… (↑↓ history)"
           value={command}
-          onChange={(e) => setCommand(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && send()}
+          onChange={(e) => { setCommand(e.target.value); setHistoryIndex(-1) }}
+          onKeyDown={handleInputKey}
         />
         <select value={lineEnding} onChange={(e) => setLineEnding(e.target.value as LineEndingId)}>
           {LINE_ENDINGS.map((l) => (
@@ -162,6 +282,29 @@ export default function App() {
         <span className="spacer" />
         <span>RX {rxBytes} B</span>
         <span>TX {txBytes} B</span>
+        <button
+          className={`btn-toggle${hexView ? ' active' : ''}`}
+          onClick={() => setHexView((h) => !h)}
+          title="Toggle hex view (RX only)"
+        >HEX</button>
+        <button
+          className={`btn-toggle${tsFormat !== 'clock' ? ' active' : ''}`}
+          onClick={cycleTs}
+          title="Cycle timestamps: clock → relative → hidden"
+        >TS</button>
+        <button
+          className={`btn-toggle${filterVisible ? ' active' : ''}`}
+          onClick={() => setFilterVisible((v) => {
+            if (!v) setTimeout(() => filterInputRef.current?.focus(), 0)
+            return !v
+          })}
+          title="Toggle filter bar (Ctrl+F)"
+        >FILTER</button>
+        <button
+          className="btn-toggle"
+          onClick={() => setLines([])}
+          title="Clear console"
+        >CLEAR</button>
         <label className="auto">
           <input type="checkbox" checked={autoscroll} onChange={(e) => setAutoscroll(e.target.checked)} />
           autoscroll
