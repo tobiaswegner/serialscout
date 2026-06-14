@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { PortInfo, LineEndingId } from "./env";
 
-const BAUD_RATES = [
-  9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600,
-] as const;
+const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600] as const;
 
 const DATA_BITS = [5, 6, 7, 8] as const;
 const STOP_BITS = [1, 1.5, 2] as const;
@@ -58,9 +56,7 @@ export default function App() {
   const [baud, setBaud] = useState(115200);
   const [dataBits, setDataBits] = useState<5 | 6 | 7 | 8>(8);
   const [stopBits, setStopBits] = useState<1 | 1.5 | 2>(1);
-  const [parity, setParity] = useState<
-    "none" | "even" | "odd" | "mark" | "space"
-  >("none");
+  const [parity, setParity] = useState<"none" | "even" | "odd" | "mark" | "space">("none");
   const [rtscts, setRtscts] = useState(false);
   const [xonxoff, setXonxoff] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -110,8 +106,7 @@ export default function App() {
   }, [push, refreshPorts]);
 
   useEffect(() => {
-    if (autoscroll && logRef.current)
-      logRef.current.scrollTop = logRef.current.scrollHeight;
+    if (autoscroll && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [lines, autoscroll]);
 
   useEffect(() => {
@@ -148,9 +143,7 @@ export default function App() {
       setConnected(true);
       sessionStart.current = Date.now();
       const parityChar = PARITY_ABBREV[parity];
-      const flowInfo = [rtscts && "RTS/CTS", xonxoff && "XON/XOFF"]
-        .filter(Boolean)
-        .join("+");
+      const flowInfo = [rtscts && "RTS/CTS", xonxoff && "XON/XOFF"].filter(Boolean).join("+");
       push(
         "sys",
         `Connected to ${selectedPort} @ ${baud} ${dataBits}${parityChar}${stopBits}${flowInfo ? ` · ${flowInfo}` : ""}`,
@@ -166,9 +159,7 @@ export default function App() {
       const { bytes } = await serial.write(command, lineEnding);
       setTxBytes((b) => b + (bytes ?? command.length));
       push("tx", command);
-      setHistory((prev) =>
-        [command, ...prev.filter((h) => h !== command)].slice(0, 100),
-      );
+      setHistory((prev) => [command, ...prev.filter((h) => h !== command)].slice(0, 100));
       setHistoryIndex(-1);
       setCommand("");
     } catch (e) {
@@ -198,14 +189,11 @@ export default function App() {
   }
 
   function cycleTs() {
-    setTsFormat((f) =>
-      f === "clock" ? "relative" : f === "relative" ? "hidden" : "clock",
-    );
+    setTsFormat((f) => (f === "clock" ? "relative" : f === "relative" ? "hidden" : "clock"));
   }
 
   function formatTs(ts: number): string {
-    if (tsFormat === "relative")
-      return `+${((ts - sessionStart.current) / 1000).toFixed(3)}s`;
+    if (tsFormat === "relative") return `+${((ts - sessionStart.current) / 1000).toFixed(3)}s`;
     if (tsFormat === "hidden") return "";
     return new Date(ts).toLocaleTimeString();
   }
@@ -219,10 +207,7 @@ export default function App() {
 
   async function exportLog() {
     const content = lines
-      .map(
-        (l) =>
-          `[${new Date(l.ts).toISOString()}] [${l.dir.toUpperCase()}] ${l.text}`,
-      )
+      .map((l) => `[${new Date(l.ts).toISOString()}] [${l.dir.toUpperCase()}] ${l.text}`)
       .join("\n");
     await serial.exportLog(content);
   }
@@ -255,9 +240,7 @@ export default function App() {
   }
 
   const filteredLines = filterText
-    ? lines.filter((l) =>
-        l.text.toLowerCase().includes(filterText.toLowerCase()),
-      )
+    ? lines.filter((l) => l.text.toLowerCase().includes(filterText.toLowerCase()))
     : lines;
 
   return (
@@ -268,10 +251,7 @@ export default function App() {
           <span className="brand-name">SerialScout</span>
         </div>
         <div className="conn-controls">
-          <select
-            value={selectedPort}
-            onChange={(e) => setSelectedPort(e.target.value)}
-          >
+          <select value={selectedPort} onChange={(e) => setSelectedPort(e.target.value)}>
             {ports.length === 0 && <option value="">No ports found</option>}
             {ports.map((p) => (
               <option key={p.path} value={p.path}>
@@ -280,10 +260,7 @@ export default function App() {
               </option>
             ))}
           </select>
-          <select
-            value={baud}
-            onChange={(e) => setBaud(Number(e.target.value))}
-          >
+          <select value={baud} onChange={(e) => setBaud(Number(e.target.value))}>
             {BAUD_RATES.map((b) => (
               <option key={b} value={b}>
                 {b} baud
@@ -293,9 +270,7 @@ export default function App() {
           <span className="sep" />
           <select
             value={dataBits}
-            onChange={(e) =>
-              setDataBits(Number(e.target.value) as 5 | 6 | 7 | 8)
-            }
+            onChange={(e) => setDataBits(Number(e.target.value) as 5 | 6 | 7 | 8)}
           >
             {DATA_BITS.map((d) => (
               <option key={d} value={d}>
@@ -303,10 +278,7 @@ export default function App() {
               </option>
             ))}
           </select>
-          <select
-            value={parity}
-            onChange={(e) => setParity(e.target.value as typeof parity)}
-          >
+          <select value={parity} onChange={(e) => setParity(e.target.value as typeof parity)}>
             {PARITIES.map((p) => (
               <option key={p.value} value={p.value}>
                 {p.label}
@@ -325,11 +297,7 @@ export default function App() {
           </select>
           <span className="sep" />
           <label className="check-label">
-            <input
-              type="checkbox"
-              checked={rtscts}
-              onChange={(e) => setRtscts(e.target.checked)}
-            />
+            <input type="checkbox" checked={rtscts} onChange={(e) => setRtscts(e.target.checked)} />
             RTS/CTS
           </label>
           <label className="check-label">
@@ -355,11 +323,7 @@ export default function App() {
           <button className="btn-ghost" onClick={importLog}>
             Import
           </button>
-          <button
-            className="btn-ghost"
-            onClick={exportLog}
-            disabled={lines.length === 0}
-          >
+          <button className="btn-ghost" onClick={exportLog} disabled={lines.length === 0}>
             Export
           </button>
         </div>
@@ -398,9 +362,7 @@ export default function App() {
         )}
         <main className="console" ref={logRef}>
           {lines.length === 0 && (
-            <p className="empty">
-              No data yet. Connect a device to begin scouting.
-            </p>
+            <p className="empty">No data yet. Connect a device to begin scouting.</p>
           )}
           {lines.length > 0 && filteredLines.length === 0 && (
             <p className="empty">No lines match the current filter.</p>
@@ -426,10 +388,7 @@ export default function App() {
           }}
           onKeyDown={handleInputKey}
         />
-        <select
-          value={lineEnding}
-          onChange={(e) => setLineEnding(e.target.value as LineEndingId)}
-        >
+        <select value={lineEnding} onChange={(e) => setLineEnding(e.target.value as LineEndingId)}>
           {LINE_ENDINGS.map((l) => (
             <option key={l.id} value={l.id}>
               {l.label}
@@ -477,11 +436,7 @@ export default function App() {
         >
           FILTER
         </button>
-        <button
-          className="btn-toggle"
-          onClick={() => setLines([])}
-          title="Clear console"
-        >
+        <button className="btn-toggle" onClick={() => setLines([])} title="Clear console">
           CLEAR
         </button>
         <label className="auto">
