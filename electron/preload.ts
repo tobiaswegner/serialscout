@@ -13,7 +13,16 @@ interface PortInfo {
 // Safe, minimal API surface exposed to the React renderer.
 contextBridge.exposeInMainWorld('serial', {
   list: (): Promise<PortInfo[]> => ipcRenderer.invoke('serial:list'),
-  open: (opts: { path: string; baudRate: number }) => ipcRenderer.invoke('serial:open', opts),
+  open: (opts: {
+    path: string
+    baudRate: number
+    dataBits?: 5 | 6 | 7 | 8
+    stopBits?: 1 | 1.5 | 2
+    parity?: 'none' | 'even' | 'odd' | 'mark' | 'space'
+    rtscts?: boolean
+    xon?: boolean
+    xoff?: boolean
+  }) => ipcRenderer.invoke('serial:open', opts),
   write: (data: string, lineEnding: LineEndingId) => ipcRenderer.invoke('serial:write', { data, lineEnding }),
   close: () => ipcRenderer.invoke('serial:close'),
   onData: (cb: (payload: { line: string }) => void) => {

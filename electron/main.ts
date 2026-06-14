@@ -39,14 +39,20 @@ function createWindow(): void {
 // ---- Serial IPC handlers ---------------------------------------------------
 
 ipcMain.handle('serial:list', async () => {
-  const ports = await SerialPort.list()
-  return ports.map((p) => ({
-    path: p.path,
-    manufacturer: p.manufacturer ?? null,
-    serialNumber: p.serialNumber ?? null,
-    vendorId: p.vendorId ?? null,
-    productId: p.productId ?? null,
-  }))
+  try {
+    const ports = await SerialPort.list()
+    return ports.map((p) => ({
+      path: p.path,
+      manufacturer: p.manufacturer ?? null,
+      serialNumber: p.serialNumber ?? null,
+      vendorId: p.vendorId ?? null,
+      productId: p.productId ?? null,
+    }))
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'EACCES') return []
+    throw err
+  }
 })
 
 interface OpenParams {
@@ -55,10 +61,13 @@ interface OpenParams {
   dataBits?: 5 | 6 | 7 | 8
   stopBits?: 1 | 1.5 | 2
   parity?: 'none' | 'even' | 'mark' | 'odd' | 'space'
+  rtscts?: boolean
+  xon?: boolean
+  xoff?: boolean
 }
 
 ipcMain.handle('serial:open', async (_evt, params: OpenParams) => {
-  const { path: portPath, baudRate, dataBits, stopBits, parity } = params
+  const { path: portPath, baudRate, dataBits, stopBits, parity, rtscts, xon, xoff } = params
 
   if (port?.isOpen) {
     await new Promise<void>((res) => port!.close(() => res()))
@@ -73,6 +82,9 @@ ipcMain.handle('serial:open', async (_evt, params: OpenParams) => {
         dataBits: dataBits ?? 8,
         stopBits: stopBits ?? 1,
         parity: parity ?? 'none',
+        rtscts: rtscts ?? false,
+        xon: xon ?? false,
+        xoff: xoff ?? false,
         autoOpen: false,
       },
       (err) => {

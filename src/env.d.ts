@@ -12,7 +12,16 @@ declare global {
   interface Window {
     serial?: {
       list(): Promise<PortInfo[]>
-      open(opts: { path: string; baudRate: number }): Promise<{ ok: boolean }>
+      open(opts: {
+        path: string
+        baudRate: number
+        dataBits?: 5 | 6 | 7 | 8
+        stopBits?: 1 | 1.5 | 2
+        parity?: 'none' | 'even' | 'odd' | 'mark' | 'space'
+        rtscts?: boolean
+        xon?: boolean
+        xoff?: boolean
+      }): Promise<{ ok: boolean }>
       write(data: string, lineEnding: LineEndingId): Promise<{ ok: boolean; bytes: number }>
       close(): Promise<{ ok: boolean }>
       onData(cb: (payload: { line: string }) => void): () => void

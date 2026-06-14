@@ -53,7 +53,9 @@ body {
 }
 .brand-name { font-weight: 600; letter-spacing: 0.02em; }
 
-.conn-controls { display: flex; align-items: center; gap: 8px; }
+.conn-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sep { width: 1px; height: 18px; background: var(--line); flex-shrink: 0; }
+.check-label { display: flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 12px; color: var(--ink-dim); cursor: pointer; user-select: none; }
 select, input[type='text'] {
   background: var(--panel-2);
   color: var(--ink);
