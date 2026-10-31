@@ -288,3 +288,18 @@ button:disabled {
   border-color: var(--accent);
   background: rgba(255, 179, 71, 0.08);
 }
+
+/* MCP endpoint indicator in the statusbar */
+.mcp-badge {
+  padding: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  color: var(--ink-dim);
+}
+.mcp-badge.on {
+  color: var(--tx);
+  border-color: var(--tx);
+  background: rgba(79, 209, 197, 0.08);
+}

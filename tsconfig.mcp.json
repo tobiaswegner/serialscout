@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2022",
+    "strict": true,
+    "types": ["node"],
+    "outDir": "out/serial",
+    "rootDir": "serial",
+    "sourceMap": true
+  },
+  "include": ["serial"]
+}

@@ -1,13 +1,23 @@
 import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import path from "node:path";
 import fs from "node:fs/promises";
-import { SerialPort } from "serialport";
-import { ReadlineParser } from "@serialport/parser-readline";
+import {
+  DEFAULT_SETTINGS,
+  SerialManager,
+  type PortSettings,
+  type SessionSnapshot,
+} from "../serial/manager.js";
+import { startMcpHost, type McpHost } from "../serial/mcp-host.js";
 
 const isDev = process.env.NODE_ENV === "development";
 
 let mainWindow: BrowserWindow | null = null;
-let port: SerialPort | null = null;
+let mcpHost: McpHost | null = null;
+let mcpError: string | null = null;
+
+// One manager for the whole process: the window's console and the MCP host both
+// talk to it, which is what lets an agent and the user share a serial port.
+const serial = new SerialManager();
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -36,101 +46,94 @@ function createWindow(): void {
   });
 }
 
-// ---- Serial IPC handlers ---------------------------------------------------
+function send(channel: string, payload: unknown): void {
+  mainWindow?.webContents.send(channel, payload);
+}
 
-ipcMain.handle("serial:list", async () => {
-  try {
-    const ports = await SerialPort.list();
-    return ports.map((p) => ({
-      path: p.path,
-      manufacturer: p.manufacturer ?? null,
-      serialNumber: p.serialNumber ?? null,
-      vendorId: p.vendorId ?? null,
-      productId: p.productId ?? null,
-    }));
-  } catch (err: unknown) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "EACCES") return [];
-    throw err;
+// ---- Manager → renderer ----------------------------------------------------
+
+// The console is line-oriented while the MCP buffer is byte-oriented, so the raw
+// stream is split here instead of consuming it with a parser.
+const pending = new Map<string, string>();
+
+serial.on("data", ({ path: portPath, chunk }) => {
+  const text = (pending.get(portPath) ?? "") + chunk.toString("utf8");
+  const parts = text.split(/\r?\n/);
+  pending.set(portPath, parts.pop() ?? "");
+  for (const line of parts) {
+    send("serial:data", { path: portPath, line, ts: Date.now() });
   }
 });
 
-interface OpenParams {
-  path: string;
-  baudRate: number;
-  dataBits?: 5 | 6 | 7 | 8;
-  stopBits?: 1 | 1.5 | 2;
-  parity?: "none" | "even" | "mark" | "odd" | "space";
-  rtscts?: boolean;
-  xon?: boolean;
-  xoff?: boolean;
-}
-
-ipcMain.handle("serial:open", async (_evt, params: OpenParams) => {
-  const { path: portPath, baudRate, dataBits, stopBits, parity, rtscts, xon, xoff } = params;
-
-  if (port?.isOpen) {
-    await new Promise<void>((res) => port!.close(() => res()));
-    port = null;
-  }
-
-  return new Promise<{ ok: boolean; path: string }>((resolve, reject) => {
-    port = new SerialPort(
-      {
-        path: portPath,
-        baudRate: Number(baudRate) || 115200,
-        dataBits: dataBits ?? 8,
-        stopBits: stopBits ?? 1,
-        parity: parity ?? "none",
-        rtscts: rtscts ?? false,
-        xon: xon ?? false,
-        xoff: xoff ?? false,
-        autoOpen: false,
-      },
-      (err) => {
-        if (err) reject(err);
-      },
-    );
-
-    port.open((err) => {
-      if (err) return reject(err);
-
-      const parser = port!.pipe(new ReadlineParser({ delimiter: "\n" }));
-      parser.on("data", (line: string) => {
-        mainWindow?.webContents.send("serial:data", { line, ts: Date.now() });
-      });
-      port!.on("error", (e: Error) => {
-        mainWindow?.webContents.send("serial:error", { message: e.message });
-      });
-      port!.on("close", () => {
-        mainWindow?.webContents.send("serial:closed", {});
-      });
-
-      resolve({ ok: true, path: portPath });
-    });
+serial.on("tx", ({ path: portPath, payload, source }) => {
+  send("serial:tx", {
+    path: portPath,
+    text: payload.toString("utf8").replace(/\r?\n$/, ""),
+    bytes: payload.length,
+    source,
+    ts: Date.now(),
   });
 });
 
+serial.on("state", ({ path: portPath, open, settings, source }) => {
+  if (!open) pending.delete(portPath);
+  send("serial:state", { path: portPath, open, settings, source });
+  if (!open) send("serial:closed", { path: portPath });
+});
+
+serial.on("error", ({ path: portPath, message }) => {
+  send("serial:error", { path: portPath, message });
+});
+
+// ---- Serial IPC handlers ---------------------------------------------------
+
+ipcMain.handle("serial:list", () => serial.listPorts());
+
+type OpenParams = Partial<PortSettings> & { path: string; baudRate: number };
+
+ipcMain.handle("serial:open", async (_evt, params: OpenParams) => {
+  const settings: PortSettings = {
+    ...DEFAULT_SETTINGS,
+    ...stripUndefined(params),
+    path: params.path,
+    baudRate: Number(params.baudRate) || 115200,
+  };
+  const snapshot = await serial.open(settings, "ui");
+  return { ok: true, path: snapshot.path, snapshot };
+});
+
 interface WriteParams {
+  path?: string;
   data: string;
   lineEnding: "none" | "lf" | "cr" | "crlf";
 }
 
-ipcMain.handle("serial:write", async (_evt, { data, lineEnding }: WriteParams) => {
-  if (!port?.isOpen) throw new Error("Port is not open");
+ipcMain.handle("serial:write", async (_evt, { path: portPath, data, lineEnding }: WriteParams) => {
+  const target = portPath ?? serial.activePath();
+  if (!target) throw new Error("Port is not open");
   const endings: Record<string, string> = { none: "", lf: "\n", cr: "\r", crlf: "\r\n" };
-  const payload = data + (endings[lineEnding] ?? "\n");
-  return new Promise<{ ok: boolean; bytes: number }>((resolve, reject) => {
-    port!.write(payload, (err) =>
-      err ? reject(err) : resolve({ ok: true, bytes: payload.length }),
-    );
-  });
+  const payload = Buffer.from(data + (endings[lineEnding] ?? "\n"), "utf8");
+  await serial.write(target, payload, false, "ui");
+  return { ok: true, bytes: payload.length };
 });
 
-ipcMain.handle("serial:close", async () => {
-  if (!port?.isOpen) return { ok: true };
-  return new Promise<{ ok: boolean }>((resolve) => port!.close(() => resolve({ ok: true })));
+ipcMain.handle("serial:close", async (_evt, portPath?: string) => {
+  const target = portPath ?? serial.activePath();
+  if (!target) return { ok: true };
+  await serial.close(target, "ui");
+  return { ok: true };
 });
+
+ipcMain.handle("serial:status", (): SessionSnapshot[] => serial.statusAll());
+
+// ---- MCP host --------------------------------------------------------------
+
+ipcMain.handle("mcp:status", () => ({
+  running: mcpHost !== null,
+  url: mcpHost?.url ?? null,
+  port: mcpHost?.port ?? null,
+  error: mcpError,
+}));
 
 // ---- Log export / import ---------------------------------------------------
 
@@ -159,11 +162,43 @@ ipcMain.handle("log:import", async () => {
 
 // ---- App lifecycle ---------------------------------------------------------
 
-app.whenReady().then(createWindow);
+function stripUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
+async function startMcp(): Promise<void> {
+  try {
+    mcpHost = await startMcpHost({ manager: serial });
+    mcpError = null;
+    console.log(`MCP endpoint listening on ${mcpHost.url}`);
+  } catch (err: unknown) {
+    mcpHost = null;
+    mcpError = err instanceof Error ? err.message : String(err);
+    // A busy port usually means a second instance owns the endpoint; the app
+    // stays fully usable without it.
+    console.error("MCP endpoint unavailable:", mcpError);
+  }
+  send("mcp:state", { running: mcpHost !== null, url: mcpHost?.url ?? null, error: mcpError });
+}
+
+app.whenReady().then(async () => {
+  createWindow();
+  await startMcp();
+});
 
 app.on("window-all-closed", () => {
-  if (port?.isOpen) port.close();
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", (event) => {
+  if (!mcpHost && serial.statusAll().length === 0) return;
+  event.preventDefault();
+  void (async () => {
+    await mcpHost?.close();
+    mcpHost = null;
+    await serial.closeAll("ui");
+    app.quit();
+  })();
 });
 
 app.on("activate", () => {

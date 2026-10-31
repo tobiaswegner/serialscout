@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { PortInfo, LineEndingId } from "./env";
+import type { PortInfo, LineEndingId, PortSettings, McpState } from "./env";
 
 const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600] as const;
 
@@ -43,12 +43,25 @@ const serial = window.serial ?? {
   open: async () => ({ ok: false }),
   write: async () => ({ ok: false, bytes: 0 }),
   close: async () => ({ ok: true }),
+  status: async () => [],
   onData: () => () => {},
+  onTx: () => () => {},
+  onState: () => () => {},
   onError: () => () => {},
   onClosed: () => () => {},
   exportLog: async () => ({ ok: false }),
   importLog: async () => ({ ok: false, content: null }),
 };
+
+const mcp = window.mcp ?? {
+  status: async (): Promise<McpState> => ({ running: false, url: null, error: null }),
+  onState: () => () => {},
+};
+
+function describeSettings(s: PortSettings): string {
+  const flow = [s.rtscts && "RTS/CTS", (s.xon || s.xoff) && "XON/XOFF"].filter(Boolean).join("+");
+  return `${s.baudRate} ${s.dataBits}${PARITY_ABBREV[s.parity]}${s.stopBits}${flow ? ` · ${flow}` : ""}`;
+}
 
 export default function App() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
@@ -72,10 +85,14 @@ export default function App() {
   const [hexView, setHexView] = useState(false);
   const [filterText, setFilterText] = useState("");
   const [filterVisible, setFilterVisible] = useState(false);
+  const [mcpState, setMcpState] = useState<McpState>({ running: false, url: null, error: null });
 
   const logRef = useRef<HTMLElement>(null);
   const filterInputRef = useRef<HTMLInputElement>(null);
   const sessionStart = useRef(Date.now());
+  // The port the console is following. The main process may open ports on an
+  // agent's behalf, so this is not always the one the user picked.
+  const activePath = useRef<string | null>(null);
 
   const push = useCallback((dir: LogLine["dir"], text: string) => {
     setLines((prev) => [
@@ -84,26 +101,88 @@ export default function App() {
     ]);
   }, []);
 
+  // Stable identity: the subscription effect below must not resubscribe every
+  // time the selected port changes.
   const refreshPorts = useCallback(async () => {
     const list = await serial.list();
     setPorts(list);
-    if (list[0] && !selectedPort) setSelectedPort(list[0].path);
-  }, [selectedPort]);
+    setSelectedPort((current) => current || (list[0]?.path ?? ""));
+  }, []);
+
+  const adopt = useCallback((settings: PortSettings) => {
+    activePath.current = settings.path;
+    setSelectedPort(settings.path);
+    setBaud(settings.baudRate);
+    setDataBits(settings.dataBits);
+    setStopBits(settings.stopBits);
+    setParity(settings.parity);
+    setRtscts(settings.rtscts);
+    setXonxoff(settings.xon || settings.xoff);
+    setConnected(true);
+  }, []);
 
   useEffect(() => {
     refreshPorts();
-    const offData = serial.onData(({ line }) => {
+
+    // A port may already be open — the MCP host shares this process, so an agent
+    // can have connected before (or instead of) the user.
+    serial.status().then((sessions) => {
+      const session = sessions.find((s) => s.isOpen);
+      if (!session || activePath.current) return;
+      adopt(session.settings);
+      sessionStart.current = Date.now();
+      push("sys", `Joined ${session.path} — already open · ${describeSettings(session.settings)}`);
+    });
+
+    const offData = serial.onData(({ path, line }) => {
+      if (activePath.current && path !== activePath.current) return;
       setRxBytes((b) => b + line.length);
       push("rx", line);
     });
+    const offTx = serial.onTx(({ path, text, bytes, source }) => {
+      if (activePath.current && path !== activePath.current) return;
+      setTxBytes((b) => b + bytes);
+      push("tx", source === "mcp" ? `[agent] ${text}` : text);
+    });
+    const offState = serial.onState(({ path, open, settings, source }) => {
+      if (!open) {
+        if (activePath.current !== path) return;
+        activePath.current = null;
+        setConnected(false);
+        push("sys", `${source === "mcp" ? "Agent closed" : "Closed"} ${path}`);
+        return;
+      }
+      if (activePath.current && activePath.current !== path) {
+        if (source === "mcp") {
+          push("sys", `Agent opened ${path} — console stays on ${activePath.current}`);
+        }
+        return;
+      }
+      const reconfigured = activePath.current === path;
+      if (!reconfigured) sessionStart.current = Date.now();
+      adopt(settings);
+      if (source === "mcp") {
+        push(
+          "sys",
+          reconfigured
+            ? `Agent reconfigured ${path} · ${describeSettings(settings)}`
+            : `Agent opened ${path} · ${describeSettings(settings)}`,
+        );
+      }
+    });
     const offErr = serial.onError(({ message }) => push("err", message));
-    const offClosed = serial.onClosed(() => setConnected(false));
+
+    mcp.status().then(setMcpState);
+    const offMcp = mcp.onState(setMcpState);
+
     return () => {
       offData();
+      offTx();
+      offState();
       offErr();
-      offClosed();
+      offMcp();
     };
-  }, [push, refreshPorts]);
+  }, [push, refreshPorts, adopt]);
 
   useEffect(() => {
     if (autoscroll && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -126,7 +205,6 @@ export default function App() {
   async function toggleConnection() {
     if (connected) {
       await serial.close();
-      setConnected(false);
       return;
     }
     try {
@@ -140,8 +218,6 @@ export default function App() {
         xon: xonxoff,
         xoff: xonxoff,
       });
-      setConnected(true);
-      sessionStart.current = Date.now();
       const parityChar = PARITY_ABBREV[parity];
       const flowInfo = [rtscts && "RTS/CTS", xonxoff && "XON/XOFF"].filter(Boolean).join("+");
       push(
@@ -156,9 +232,7 @@ export default function App() {
   async function send() {
     if (!command.trim()) return;
     try {
-      const { bytes } = await serial.write(command, lineEnding);
-      setTxBytes((b) => b + (bytes ?? command.length));
-      push("tx", command);
+      await serial.write(command, lineEnding);
       setHistory((prev) => [command, ...prev.filter((h) => h !== command)].slice(0, 100));
       setHistoryIndex(-1);
       setCommand("");
@@ -410,6 +484,16 @@ export default function App() {
         <span className="spacer" />
         <span>RX {rxBytes} B</span>
         <span>TX {txBytes} B</span>
+        <span
+          className={`mcp-badge${mcpState.running ? " on" : ""}`}
+          title={
+            mcpState.running
+              ? `MCP endpoint for AI agents: ${mcpState.url} (shares this connection)`
+              : (mcpState.error ?? "MCP endpoint not running")
+          }
+        >
+          MCP {mcpState.running ? (mcpState.url?.match(/:(\d+)/)?.[1] ?? "on") : "off"}
+        </span>
         <button
           className={`btn-toggle${hexView ? " active" : ""}`}
           onClick={() => setHexView((h) => !h)}

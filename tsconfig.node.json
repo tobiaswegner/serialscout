@@ -9,5 +9,5 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["electron", "electron.vite.config.ts"]
+  "include": ["electron", "serial", "electron.vite.config.ts"]
 }
