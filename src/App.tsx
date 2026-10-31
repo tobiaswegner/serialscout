@@ -73,6 +73,7 @@ export default function App() {
   const [rtscts, setRtscts] = useState(false);
   const [xonxoff, setXonxoff] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [command, setCommand] = useState("");
   const [lineEnding, setLineEnding] = useState<LineEndingId>("lf");
@@ -270,6 +271,16 @@ export default function App() {
     if (tsFormat === "relative") return `+${((ts - sessionStart.current) / 1000).toFixed(3)}s`;
     if (tsFormat === "hidden") return "";
     return new Date(ts).toLocaleTimeString();
+  }
+
+  function copySelection() {
+    const sel = window.getSelection();
+    const text = sel && logRef.current?.contains(sel.anchorNode) ? sel.toString() : "";
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    });
   }
 
   function renderText(dir: LogLine["dir"], text: string): string {
@@ -519,6 +530,14 @@ export default function App() {
           title="Toggle filter bar (Ctrl+F)"
         >
           FILTER
+        </button>
+        <button
+          className="btn-toggle"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={copySelection}
+          title="Copy the selected console text"
+        >
+          {copied ? "COPIED" : "COPY"}
         </button>
         <button className="btn-toggle" onClick={() => setLines([])} title="Clear console">
           CLEAR
