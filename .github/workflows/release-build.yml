@@ -16,7 +16,7 @@ jobs:
       changed: ${{ steps.compare.outputs.changed }}
       version: ${{ steps.compare.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 2
 
@@ -65,14 +65,14 @@ jobs:
             eb_args: --win --x64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # ARM64 Linux cross-compilation requires QEMU for native module prebuilds
       - name: Set up QEMU
         if: matrix.qemu == true
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: npm
@@ -94,7 +94,7 @@ jobs:
 
       # Only the installers — release/ also holds the unpacked app directories.
       - name: Upload installers
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: serialscout-${{ needs.version.outputs.version }}-${{ matrix.label }}
           path: |
