@@ -4,13 +4,16 @@ A cross-platform desktop client for talking to **UART / serial devices** and com
 
 > Status: early scaffold. The UI design lives in [`design/mockup.html`](design/mockup.html).
 
-## Features (planned)
+## Features
 
-- Auto-discover and connect to serial ports (configurable baud, data bits, parity, stop bits)
-- Live console with color-coded RX / TX, timestamps, and ASCII/HEX views
+- Auto-discover and connect to serial ports (configurable baud, data bits, parity, stop bits, flow control)
+- Multiple ports at once, as tabs or in a split view (side by side / stacked)
+- Live console with color-coded RX / TX, timestamps, ASCII/HEX views, filter, and copy-selection
 - Command input with selectable line endings (LF / CR / CRLF) and history
-- Saved connections and reusable command snippets / macros
-- Throughput stats and session logging
+- Log export / import
+- MCP server so AI agents can share the open ports
+
+Planned: saved connections and reusable command snippets / macros.
 
 ## Architecture
 
@@ -19,13 +22,15 @@ serial/manager.ts    Shared serial core — owns the ports, buffers RX, emits ev
 serial/mcp-*.ts      MCP tools, the in-app HTTP host, and the stdio entry point
 electron/main.ts     Main process — one SerialManager for the UI and the MCP host
 electron/preload.ts  Secure bridge — exposes window.serial / window.mcp
-src/                 React renderer (Vite dev server in development)
+src/App.tsx          Renderer shell — tab bar, layout switch, list of panes
+src/components/      SessionPane — one port's controls, console and composer
 design/mockup.html   Self-contained UI design reference
 ```
 
-The main process holds a single `SerialManager`. The window talks to it over IPC
-and the MCP host serves the same instance over HTTP, so the console and an agent
-share one open port instead of fighting over the device.
+The main process holds a single `SerialManager` that tracks every open port. The
+window talks to it over IPC and the MCP host serves the same instance over HTTP, so
+the console and an agent share open ports instead of fighting over the device. Each
+pane in the window follows one port and filters events by its path.
 
 The renderer never touches Node directly. It calls `window.serial.*`, which the
 preload bridges to IPC handlers in the main process. This keeps `contextIsolation`
@@ -50,12 +55,13 @@ npm run package  # produces a distributable in release/
 
 The app hosts a [Model Context Protocol](https://modelcontextprotocol.io) server that
 gives an AI agent the same serial capabilities as the UI — port enumeration, port
-settings, the receive buffer, and transmit — **on the same connection the console is
+settings, the receive buffer, and transmit — **on the same connections the console is
 using**. Both sides see every received byte, the agent's writes appear in the console
-tagged `[agent]`, and opening a port the app already has open just joins it.
+tagged `[agent]`, and opening a port the app already has open just joins it. A port an agent opens
+shows up as its own tab.
 
 While SerialScout runs, the endpoint is at `http://127.0.0.1:8375/mcp` (Streamable
-HTTP). The statusbar shows `MCP 8375` when it is up. For clients that speak HTTP:
+HTTP). The top bar shows `MCP 8375` when it is up. For clients that speak HTTP:
 
 ```json
 {

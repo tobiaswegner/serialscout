@@ -1,6 +1,6 @@
 {
   "name": "serialscout",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A cross-platform desktop client for talking to UART / serial devices and CLIs.",
   "author": "",
@@ -31,8 +31,8 @@
     "@vitejs/plugin-react": "^5.2.0",
     "concurrently": "^9.0.1",
     "cross-env": "^7.0.3",
-    "electron": "^31.0.0",
-    "electron-builder": "^24.13.3",
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.0",
     "electron-vite": "^5.0.0",
     "prettier": "^3.8.4",
     "typescript": "^6.0.3",
