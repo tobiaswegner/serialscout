@@ -1,12 +1,19 @@
 name: Release Build
 
 # Builds installers for every platform whenever the version in package.json
-# changes on main. Can also be started by hand from the Actions tab.
+# changes on main, then publishes them as a GitHub release tagged v<version>.
+# Can also be started by hand from the Actions tab; a manual run only publishes
+# a release if "release" is ticked.
 on:
   push:
     branches: [main]
     paths: [package.json]
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Also publish a GitHub release for this version"
+        type: boolean
+        default: false
 
 jobs:
   version:
@@ -105,3 +112,43 @@ jobs:
             release/*.exe
           if-no-files-found: error
           retention-days: 90
+
+  release:
+    name: Publish GitHub release
+    needs: [version, build]
+    if: github.event_name == 'push' || inputs.release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: v${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Skip if the release already exists
+        id: existing
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists - leaving it untouched."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download installers
+        if: steps.existing.outputs.exists == 'false'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: serialscout-${{ needs.version.outputs.version }}-*
+          path: installers
+          merge-multiple: true
+
+      - name: Create release
+        if: steps.existing.outputs.exists == 'false'
+        run: |
+          ls -l installers
+          gh release create "$TAG" installers/* \
+            --target "${{ github.sha }}" \
+            --title "SerialScout ${TAG#v}" \
+            --generate-notes
