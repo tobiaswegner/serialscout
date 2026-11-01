@@ -1,0 +1,107 @@
+name: Release Build
+
+# Builds installers for every platform whenever the version in package.json
+# changes on main. Can also be started by hand from the Actions tab.
+on:
+  push:
+    branches: [main]
+    paths: [package.json]
+  workflow_dispatch:
+
+jobs:
+  version:
+    name: Detect version change
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.compare.outputs.changed }}
+      version: ${{ steps.compare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Compare version with previous commit
+        id: compare
+        run: |
+          current=$(node -p "require('./package.json').version")
+          previous=""
+          if [ "${{ github.event_name }}" = "push" ]; then
+            previous=$(git show "${{ github.event.before }}:package.json" 2>/dev/null \
+              | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version" 2>/dev/null || true)
+          fi
+          echo "version=$current" >> "$GITHUB_OUTPUT"
+          # A manual run always builds; a push builds only if the version moved.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$current" != "$previous" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version: ${previous:-<none>} -> $current"
+
+  build:
+    name: Build / ${{ matrix.label }}
+    needs: version
+    if: needs.version.outputs.changed == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x64
+            runner: ubuntu-latest
+            eb_args: --linux --x64
+
+          - label: linux-arm64
+            runner: ubuntu-latest
+            eb_args: --linux --arm64
+            qemu: true
+
+          - label: macos-universal
+            runner: macos-latest
+            eb_args: --mac --universal
+
+          - label: windows-x64
+            runner: windows-latest
+            eb_args: --win --x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ARM64 Linux cross-compilation requires QEMU for native module prebuilds
+      - name: Set up QEMU
+        if: matrix.qemu == true
+        uses: docker/setup-qemu-action@v3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Package
+        run: npx electron-builder ${{ matrix.eb_args }} --publish never
+        env:
+          # Installers are unsigned; don't go looking for a signing identity.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      # Only the installers — release/ also holds the unpacked app directories.
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: serialscout-${{ needs.version.outputs.version }}-${{ matrix.label }}
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.dmg
+            release/*.zip
+            release/*.exe
+          if-no-files-found: error
+          retention-days: 90
