@@ -31,9 +31,9 @@ contextBridge.exposeInMainWorld("serial", {
     xon?: boolean;
     xoff?: boolean;
   }) => ipcRenderer.invoke("serial:open", opts),
-  write: (data: string, lineEnding: LineEndingId) =>
-    ipcRenderer.invoke("serial:write", { data, lineEnding }),
-  close: () => ipcRenderer.invoke("serial:close"),
+  write: (data: string, lineEnding: LineEndingId, path?: string) =>
+    ipcRenderer.invoke("serial:write", { path, data, lineEnding }),
+  close: (path?: string) => ipcRenderer.invoke("serial:close", path),
   /** Ports already open in the main process — an MCP client may have opened one. */
   status: (): Promise<SessionSnapshot[]> => ipcRenderer.invoke("serial:status"),
   onData: (cb: (payload: { path: string; line: string }) => void) => subscribe("serial:data", cb),
@@ -48,7 +48,8 @@ contextBridge.exposeInMainWorld("serial", {
       source: "ui" | "mcp";
     }) => void,
   ) => subscribe("serial:state", cb),
-  onError: (cb: (payload: { message: string }) => void) => subscribe("serial:error", cb),
+  onError: (cb: (payload: { path: string; message: string }) => void) =>
+    subscribe("serial:error", cb),
   onClosed: (cb: () => void) => subscribe("serial:closed", () => cb()),
   exportLog: (content: string) => ipcRenderer.invoke("log:export", content),
   importLog: () => ipcRenderer.invoke("log:import"),

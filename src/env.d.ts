@@ -52,8 +52,12 @@ declare global {
         xon?: boolean;
         xoff?: boolean;
       }): Promise<{ ok: boolean }>;
-      write(data: string, lineEnding: LineEndingId): Promise<{ ok: boolean; bytes: number }>;
-      close(): Promise<{ ok: boolean }>;
+      write(
+        data: string,
+        lineEnding: LineEndingId,
+        path?: string,
+      ): Promise<{ ok: boolean; bytes: number }>;
+      close(path?: string): Promise<{ ok: boolean }>;
       status(): Promise<SessionSnapshot[]>;
       onData(cb: (payload: { path: string; line: string }) => void): () => void;
       onTx(
@@ -67,7 +71,7 @@ declare global {
           source: Source;
         }) => void,
       ): () => void;
-      onError(cb: (payload: { message: string }) => void): () => void;
+      onError(cb: (payload: { path: string; message: string }) => void): () => void;
       onClosed(cb: () => void): () => void;
       exportLog(content: string): Promise<{ ok: boolean }>;
       importLog(): Promise<{ ok: boolean; content: string | null }>;

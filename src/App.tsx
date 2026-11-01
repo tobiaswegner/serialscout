@@ -1,555 +1,199 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import type { PortInfo, LineEndingId, PortSettings, McpState } from "./env";
+import type { PortInfo, PortSettings, McpState } from "./env";
+import SessionPane from "./components/SessionPane";
 
-const BAUD_RATES = [9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600] as const;
+type Layout = "tabs" | "columns" | "rows";
 
-const DATA_BITS = [5, 6, 7, 8] as const;
-const STOP_BITS = [1, 1.5, 2] as const;
-const PARITIES = [
-  { value: "none", label: "None" },
-  { value: "even", label: "Even" },
-  { value: "odd", label: "Odd" },
-  { value: "mark", label: "Mark" },
-  { value: "space", label: "Space" },
-] as const;
-
-const PARITY_ABBREV: Record<string, string> = {
-  none: "N",
-  even: "E",
-  odd: "O",
-  mark: "M",
-  space: "S",
-};
-
-const LINE_ENDINGS: Array<{ id: LineEndingId; label: string }> = [
-  { id: "lf", label: "LF \\n" },
-  { id: "cr", label: "CR \\r" },
-  { id: "crlf", label: "CRLF \\r\\n" },
-  { id: "none", label: "None" },
+const LAYOUTS: Array<{ id: Layout; label: string; title: string }> = [
+  { id: "tabs", label: "TABS", title: "One port at a time, switch with tabs" },
+  { id: "columns", label: "COLS", title: "Show all ports side by side" },
+  { id: "rows", label: "ROWS", title: "Show all ports stacked" },
 ];
 
-type TsFormat = "clock" | "relative" | "hidden";
-
-interface LogLine {
+interface PaneEntry {
   id: string;
-  dir: "rx" | "tx" | "sys" | "err";
-  text: string;
-  ts: number;
+  /** Settings of a port that was already open when the pane was created. */
+  adopt?: PortSettings;
 }
 
-// Falls back to a no-op shim so the renderer can run in a plain browser during UI work.
-const serial = window.serial ?? {
-  list: async (): Promise<PortInfo[]> => [],
-  open: async () => ({ ok: false }),
-  write: async () => ({ ok: false, bytes: 0 }),
-  close: async () => ({ ok: true }),
-  status: async () => [],
-  onData: () => () => {},
-  onTx: () => () => {},
-  onState: () => () => {},
-  onError: () => () => {},
-  onClosed: () => () => {},
-  exportLog: async () => ({ ok: false }),
-  importLog: async () => ({ ok: false, content: null }),
-};
+const serial = window.serial;
 
 const mcp = window.mcp ?? {
   status: async (): Promise<McpState> => ({ running: false, url: null, error: null }),
   onState: () => () => {},
 };
 
-function describeSettings(s: PortSettings): string {
-  const flow = [s.rtscts && "RTS/CTS", (s.xon || s.xoff) && "XON/XOFF"].filter(Boolean).join("+");
-  return `${s.baudRate} ${s.dataBits}${PARITY_ABBREV[s.parity]}${s.stopBits}${flow ? ` · ${flow}` : ""}`;
+function newPane(adopt?: PortSettings): PaneEntry {
+  return { id: crypto.randomUUID(), adopt };
+}
+
+function tabLabel(path: string | null | undefined): string {
+  return path ? (path.split("/").pop() ?? path) : "New";
 }
 
 export default function App() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
-  const [selectedPort, setSelectedPort] = useState("");
-  const [baud, setBaud] = useState(115200);
-  const [dataBits, setDataBits] = useState<5 | 6 | 7 | 8>(8);
-  const [stopBits, setStopBits] = useState<1 | 1.5 | 2>(1);
-  const [parity, setParity] = useState<"none" | "even" | "odd" | "mark" | "space">("none");
-  const [rtscts, setRtscts] = useState(false);
-  const [xonxoff, setXonxoff] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [lines, setLines] = useState<LogLine[]>([]);
-  const [command, setCommand] = useState("");
-  const [lineEnding, setLineEnding] = useState<LineEndingId>("lf");
-  const [autoscroll, setAutoscroll] = useState(true);
-  const [rxBytes, setRxBytes] = useState(0);
-  const [txBytes, setTxBytes] = useState(0);
-  const [history, setHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const [tsFormat, setTsFormat] = useState<TsFormat>("clock");
-  const [hexView, setHexView] = useState(false);
-  const [filterText, setFilterText] = useState("");
-  const [filterVisible, setFilterVisible] = useState(false);
+  const [panes, setPanes] = useState<PaneEntry[]>([]);
+  const [activeId, setActiveId] = useState("");
+  const [layout, setLayout] = useState<Layout>("tabs");
+  // Port followed by each pane. The ref is what event handlers read — it is
+  // updated synchronously, before the state that drives the tab labels.
+  const [paths, setPaths] = useState<Record<string, string | null>>({});
+  const pathsRef = useRef<Record<string, string | null>>({});
   const [mcpState, setMcpState] = useState<McpState>({ running: false, url: null, error: null });
 
-  const logRef = useRef<HTMLElement>(null);
-  const filterInputRef = useRef<HTMLInputElement>(null);
-  const sessionStart = useRef(Date.now());
-  // The port the console is following. The main process may open ports on an
-  // agent's behalf, so this is not always the one the user picked.
-  const activePath = useRef<string | null>(null);
-
-  const push = useCallback((dir: LogLine["dir"], text: string) => {
-    setLines((prev) => [
-      ...prev.slice(-4999),
-      { id: crypto.randomUUID(), dir, text, ts: Date.now() },
-    ]);
-  }, []);
-
-  // Stable identity: the subscription effect below must not resubscribe every
-  // time the selected port changes.
   const refreshPorts = useCallback(async () => {
-    const list = await serial.list();
-    setPorts(list);
-    setSelectedPort((current) => current || (list[0]?.path ?? ""));
+    setPorts((await serial?.list()) ?? []);
   }, []);
 
-  const adopt = useCallback((settings: PortSettings) => {
-    activePath.current = settings.path;
-    setSelectedPort(settings.path);
-    setBaud(settings.baudRate);
-    setDataBits(settings.dataBits);
-    setStopBits(settings.stopBits);
-    setParity(settings.parity);
-    setRtscts(settings.rtscts);
-    setXonxoff(settings.xon || settings.xoff);
-    setConnected(true);
+  const setPanePath = useCallback((id: string, path: string | null) => {
+    pathsRef.current = { ...pathsRef.current, [id]: path };
+    setPaths(pathsRef.current);
+  }, []);
+
+  const addPane = useCallback((adopt?: PortSettings) => {
+    const pane = newPane(adopt);
+    if (adopt) {
+      pathsRef.current = { ...pathsRef.current, [pane.id]: adopt.path };
+      setPaths(pathsRef.current);
+    }
+    setPanes((prev) => [...prev, pane]);
+    setActiveId(pane.id);
+    return pane;
+  }, []);
+
+  const removePane = useCallback(async (id: string) => {
+    const path = pathsRef.current[id];
+    if (path) {
+      try {
+        await serial?.close(path);
+      } catch {
+        // Already closed — nothing left to release.
+      }
+    }
+    const { [id]: _gone, ...rest } = pathsRef.current;
+    pathsRef.current = rest;
+    setPaths(rest);
+    setPanes((prev) => {
+      const next = prev.filter((p) => p.id !== id);
+      if (next.length === 0) {
+        const fresh = newPane();
+        setActiveId(fresh.id);
+        return [fresh];
+      }
+      setActiveId((cur) => (cur === id ? next[next.length - 1].id : cur));
+      return next;
+    });
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     refreshPorts();
 
-    // A port may already be open — the MCP host shares this process, so an agent
-    // can have connected before (or instead of) the user.
-    serial.status().then((sessions) => {
-      const session = sessions.find((s) => s.isOpen);
-      if (!session || activePath.current) return;
-      adopt(session.settings);
-      sessionStart.current = Date.now();
-      push("sys", `Joined ${session.path} — already open · ${describeSettings(session.settings)}`);
+    // Ports may already be open — the MCP host shares this process, so an agent
+    // can have connected before (or instead of) the user. Each gets its own pane.
+    (serial?.status() ?? Promise.resolve([])).then((sessions) => {
+      if (cancelled) return;
+      const open = sessions.filter((s) => s.isOpen);
+      const initial = open.length ? open.map((s) => newPane(s.settings)) : [newPane()];
+      pathsRef.current = Object.fromEntries(initial.map((p) => [p.id, p.adopt?.path ?? null]));
+      setPaths(pathsRef.current);
+      setPanes(initial);
+      setActiveId(initial[0].id);
     });
 
-    const offData = serial.onData(({ path, line }) => {
-      if (activePath.current && path !== activePath.current) return;
-      setRxBytes((b) => b + line.length);
-      push("rx", line);
+    // A port an agent opens that no pane follows yet gets a pane of its own.
+    const offState = serial?.onState(({ path, open, settings, source }) => {
+      if (!open || source !== "mcp") return;
+      if (Object.values(pathsRef.current).includes(path)) return;
+      addPane(settings);
     });
-    const offTx = serial.onTx(({ path, text, bytes, source }) => {
-      if (activePath.current && path !== activePath.current) return;
-      setTxBytes((b) => b + bytes);
-      push("tx", source === "mcp" ? `[agent] ${text}` : text);
-    });
-    const offState = serial.onState(({ path, open, settings, source }) => {
-      if (!open) {
-        if (activePath.current !== path) return;
-        activePath.current = null;
-        setConnected(false);
-        push("sys", `${source === "mcp" ? "Agent closed" : "Closed"} ${path}`);
-        return;
-      }
-      if (activePath.current && activePath.current !== path) {
-        if (source === "mcp") {
-          push("sys", `Agent opened ${path} — console stays on ${activePath.current}`);
-        }
-        return;
-      }
-      const reconfigured = activePath.current === path;
-      if (!reconfigured) sessionStart.current = Date.now();
-      adopt(settings);
-      if (source === "mcp") {
-        push(
-          "sys",
-          reconfigured
-            ? `Agent reconfigured ${path} · ${describeSettings(settings)}`
-            : `Agent opened ${path} · ${describeSettings(settings)}`,
-        );
-      }
-    });
-    const offErr = serial.onError(({ message }) => push("err", message));
 
     mcp.status().then(setMcpState);
     const offMcp = mcp.onState(setMcpState);
 
     return () => {
-      offData();
-      offTx();
-      offState();
-      offErr();
+      cancelled = true;
+      offState?.();
       offMcp();
     };
-  }, [push, refreshPorts, adopt]);
+  }, [refreshPorts, addPane]);
 
-  useEffect(() => {
-    if (autoscroll && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [lines, autoscroll]);
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if ((e.ctrlKey || e.metaKey) && e.key === "f") {
-        e.preventDefault();
-        setFilterVisible((v) => {
-          if (!v) setTimeout(() => filterInputRef.current?.focus(), 0);
-          return !v;
-        });
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-
-  async function toggleConnection() {
-    if (connected) {
-      await serial.close();
-      return;
-    }
-    try {
-      await serial.open({
-        path: selectedPort,
-        baudRate: baud,
-        dataBits,
-        stopBits,
-        parity,
-        rtscts,
-        xon: xonxoff,
-        xoff: xonxoff,
-      });
-      const parityChar = PARITY_ABBREV[parity];
-      const flowInfo = [rtscts && "RTS/CTS", xonxoff && "XON/XOFF"].filter(Boolean).join("+");
-      push(
-        "sys",
-        `Connected to ${selectedPort} @ ${baud} ${dataBits}${parityChar}${stopBits}${flowInfo ? ` · ${flowInfo}` : ""}`,
-      );
-    } catch (e) {
-      push("err", e instanceof Error ? e.message : String(e));
-    }
-  }
-
-  async function send() {
-    if (!command.trim()) return;
-    try {
-      await serial.write(command, lineEnding);
-      setHistory((prev) => [command, ...prev.filter((h) => h !== command)].slice(0, 100));
-      setHistoryIndex(-1);
-      setCommand("");
-    } catch (e) {
-      push("err", e instanceof Error ? e.message : String(e));
-    }
-  }
-
-  function handleInputKey(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter") {
-      send();
-      return;
-    }
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      const next = Math.min(historyIndex + 1, history.length - 1);
-      if (next >= 0) {
-        setHistoryIndex(next);
-        setCommand(history[next]);
-      }
-    }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      const next = historyIndex - 1;
-      setHistoryIndex(next);
-      setCommand(next < 0 ? "" : (history[next] ?? ""));
-    }
-  }
-
-  function cycleTs() {
-    setTsFormat((f) => (f === "clock" ? "relative" : f === "relative" ? "hidden" : "clock"));
-  }
-
-  function formatTs(ts: number): string {
-    if (tsFormat === "relative") return `+${((ts - sessionStart.current) / 1000).toFixed(3)}s`;
-    if (tsFormat === "hidden") return "";
-    return new Date(ts).toLocaleTimeString();
-  }
-
-  function copySelection() {
-    const sel = window.getSelection();
-    const text = sel && logRef.current?.contains(sel.anchorNode) ? sel.toString() : "";
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    });
-  }
-
-  function renderText(dir: LogLine["dir"], text: string): string {
-    if (!hexView || dir !== "rx") return text;
-    return Array.from(text)
-      .map((c) => c.charCodeAt(0).toString(16).padStart(2, "0"))
-      .join(" ");
-  }
-
-  async function exportLog() {
-    const content = lines
-      .map((l) => `[${new Date(l.ts).toISOString()}] [${l.dir.toUpperCase()}] ${l.text}`)
-      .join("\n");
-    await serial.exportLog(content);
-  }
-
-  async function importLog() {
-    const result = await serial.importLog();
-    if (!result.ok || !result.content) return;
-    const imported: LogLine[] = result.content
-      .split("\n")
-      .filter((line) => line.trim())
-      .map((line) => {
-        const m = line.match(/^\[([^\]]+)\] \[(RX|TX|SYS|ERR)\] (.*)$/);
-        if (m) {
-          return {
-            id: crypto.randomUUID(),
-            dir: m[2].toLowerCase() as LogLine["dir"],
-            text: m[3],
-            ts: new Date(m[1]).getTime() || Date.now(),
-          };
-        }
-        return {
-          id: crypto.randomUUID(),
-          dir: "sys" as const,
-          text: line,
-          ts: Date.now(),
-        };
-      });
-    push("sys", `─── Imported ${imported.length} lines ───`);
-    setLines((prev) => [...prev, ...imported].slice(-4999));
-  }
-
-  const filteredLines = filterText
-    ? lines.filter((l) => l.text.toLowerCase().includes(filterText.toLowerCase()))
-    : lines;
+  const visibleId = panes.some((p) => p.id === activeId) ? activeId : panes[0]?.id;
 
   return (
     <div className="app">
-      <header className="topbar">
+      <header className="appbar">
         <div className="brand">
           <span className="brand-mark" aria-hidden />
           <span className="brand-name">SerialScout</span>
         </div>
-        <div className="conn-controls">
-          <select value={selectedPort} onChange={(e) => setSelectedPort(e.target.value)}>
-            {ports.length === 0 && <option value="">No ports found</option>}
-            {ports.map((p) => (
-              <option key={p.path} value={p.path}>
-                {p.path}
-                {p.manufacturer ? ` — ${p.manufacturer}` : ""}
-              </option>
-            ))}
-          </select>
-          <select value={baud} onChange={(e) => setBaud(Number(e.target.value))}>
-            {BAUD_RATES.map((b) => (
-              <option key={b} value={b}>
-                {b} baud
-              </option>
-            ))}
-          </select>
-          <span className="sep" />
-          <select
-            value={dataBits}
-            onChange={(e) => setDataBits(Number(e.target.value) as 5 | 6 | 7 | 8)}
-          >
-            {DATA_BITS.map((d) => (
-              <option key={d} value={d}>
-                {d} data
-              </option>
-            ))}
-          </select>
-          <select value={parity} onChange={(e) => setParity(e.target.value as typeof parity)}>
-            {PARITIES.map((p) => (
-              <option key={p.value} value={p.value}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-          <select
-            value={stopBits}
-            onChange={(e) => setStopBits(Number(e.target.value) as 1 | 1.5 | 2)}
-          >
-            {STOP_BITS.map((s) => (
-              <option key={s} value={s}>
-                {s} stop
-              </option>
-            ))}
-          </select>
-          <span className="sep" />
-          <label className="check-label">
-            <input type="checkbox" checked={rtscts} onChange={(e) => setRtscts(e.target.checked)} />
-            RTS/CTS
-          </label>
-          <label className="check-label">
-            <input
-              type="checkbox"
-              checked={xonxoff}
-              onChange={(e) => setXonxoff(e.target.checked)}
-            />
-            XON/XOFF
-          </label>
-          <span className="sep" />
-          <button className="btn-ghost" onClick={refreshPorts}>
-            Rescan
-          </button>
-          <button
-            className={connected ? "btn-disconnect" : "btn-connect"}
-            onClick={toggleConnection}
-          >
-            {connected ? "Disconnect" : "Connect"}
-          </button>
-        </div>
-        <div className="session-controls">
-          <button className="btn-ghost" onClick={importLog}>
-            Import
-          </button>
-          <button className="btn-ghost" onClick={exportLog} disabled={lines.length === 0}>
-            Export
-          </button>
-        </div>
-      </header>
-
-      <div className="console-wrapper">
-        {filterVisible && (
-          <div className="filter-bar">
-            <input
-              ref={filterInputRef}
-              type="text"
-              placeholder="Filter lines…"
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  setFilterVisible(false);
-                  setFilterText("");
-                }
-              }}
-            />
-            <span className="filter-count">
-              {filteredLines.length} / {lines.length}
-            </span>
-            <button
-              className="btn-ghost"
-              style={{ padding: "4px 10px" }}
-              onClick={() => {
-                setFilterVisible(false);
-                setFilterText("");
-              }}
+        <nav className="tabs">
+          {panes.map((p) => (
+            <div
+              key={p.id}
+              className={`tab${p.id === visibleId ? " active" : ""}`}
+              onClick={() => setActiveId(p.id)}
             >
-              ✕
-            </button>
-          </div>
-        )}
-        <main className="console" ref={logRef}>
-          {lines.length === 0 && (
-            <p className="empty">No data yet. Connect a device to begin scouting.</p>
-          )}
-          {lines.length > 0 && filteredLines.length === 0 && (
-            <p className="empty">No lines match the current filter.</p>
-          )}
-          {filteredLines.map((l) => (
-            <div key={l.id} className={`row row-${l.dir}`}>
-              <span className="ts">{formatTs(l.ts)}</span>
-              <span className="tag">{l.dir.toUpperCase()}</span>
-              <span className="text">{renderText(l.dir, l.text)}</span>
+              <span className={`dot ${paths[p.id] ? "on" : "off"}`} />
+              <span className="tab-label">{tabLabel(paths[p.id])}</span>
+              <button
+                className="tab-close"
+                title="Close tab"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removePane(p.id);
+                }}
+              >
+                ✕
+              </button>
             </div>
           ))}
-        </main>
-      </div>
-
-      <footer className="composer">
-        <input
-          type="text"
-          placeholder="Type a command and press Enter… (↑↓ history)"
-          value={command}
-          onChange={(e) => {
-            setCommand(e.target.value);
-            setHistoryIndex(-1);
-          }}
-          onKeyDown={handleInputKey}
-        />
-        <select value={lineEnding} onChange={(e) => setLineEnding(e.target.value as LineEndingId)}>
-          {LINE_ENDINGS.map((l) => (
-            <option key={l.id} value={l.id}>
+          <button className="tab-add" onClick={() => addPane()} title="Open another port">
+            +
+          </button>
+        </nav>
+        <div className="layout-toggle">
+          {LAYOUTS.map((l) => (
+            <button
+              key={l.id}
+              className={`btn-toggle${layout === l.id ? " active" : ""}`}
+              onClick={() => setLayout(l.id)}
+              title={l.title}
+            >
               {l.label}
-            </option>
+            </button>
           ))}
-        </select>
-        <button className="btn-send" onClick={send} disabled={!connected}>
-          Send
-        </button>
-      </footer>
-
-      <div className="statusbar">
-        <span className={`dot ${connected ? "on" : "off"}`} />
-        <span>
-          {connected
-            ? `${selectedPort} · ${baud} ${dataBits}${PARITY_ABBREV[parity]}${stopBits}${rtscts ? " · RTS/CTS" : ""}${xonxoff ? " · XON/XOFF" : ""}`
-            : "Disconnected"}
-        </span>
-        <span className="spacer" />
-        <span>RX {rxBytes} B</span>
-        <span>TX {txBytes} B</span>
+        </div>
         <span
           className={`mcp-badge${mcpState.running ? " on" : ""}`}
           title={
             mcpState.running
-              ? `MCP endpoint for AI agents: ${mcpState.url} (shares this connection)`
+              ? `MCP endpoint for AI agents: ${mcpState.url} (shares these connections)`
               : (mcpState.error ?? "MCP endpoint not running")
           }
         >
           MCP {mcpState.running ? (mcpState.url?.match(/:(\d+)/)?.[1] ?? "on") : "off"}
         </span>
-        <button
-          className={`btn-toggle${hexView ? " active" : ""}`}
-          onClick={() => setHexView((h) => !h)}
-          title="Toggle hex view (RX only)"
-        >
-          HEX
-        </button>
-        <button
-          className={`btn-toggle${tsFormat !== "clock" ? " active" : ""}`}
-          onClick={cycleTs}
-          title="Cycle timestamps: clock → relative → hidden"
-        >
-          TS
-        </button>
-        <button
-          className={`btn-toggle${filterVisible ? " active" : ""}`}
-          onClick={() =>
-            setFilterVisible((v) => {
-              if (!v) setTimeout(() => filterInputRef.current?.focus(), 0);
-              return !v;
-            })
-          }
-          title="Toggle filter bar (Ctrl+F)"
-        >
-          FILTER
-        </button>
-        <button
-          className="btn-toggle"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={copySelection}
-          title="Copy the selected console text"
-        >
-          {copied ? "COPIED" : "COPY"}
-        </button>
-        <button className="btn-toggle" onClick={() => setLines([])} title="Clear console">
-          CLEAR
-        </button>
-        <label className="auto">
-          <input
-            type="checkbox"
-            checked={autoscroll}
-            onChange={(e) => setAutoscroll(e.target.checked)}
+      </header>
+
+      <div className={`workspace layout-${layout}`}>
+        {panes.map((p) => (
+          <SessionPane
+            key={p.id}
+            ports={ports}
+            takenPaths={Object.entries(paths)
+              .filter(([id, path]) => id !== p.id && path)
+              .map(([, path]) => path as string)}
+            adopt={p.adopt}
+            active={p.id === visibleId}
+            visible={layout !== "tabs" || p.id === visibleId}
+            onActivate={() => setActiveId(p.id)}
+            onPath={(path) => setPanePath(p.id, path)}
+            onRescan={refreshPorts}
+            onClose={layout !== "tabs" && panes.length > 1 ? () => removePane(p.id) : undefined}
           />
-          autoscroll
-        </label>
+        ))}
       </div>
     </div>
   );
